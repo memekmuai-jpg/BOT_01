@@ -112,25 +112,23 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
         return data["choices"][0]["message"]["content"]
 
 def clean_output(text):
-    """Remove any header/label lines that AI might generate at the start."""
+    """Remove only exact bot-generated header patterns from the very first line."""
     import re
-    lines = text.split("\n")
-    clean_lines = []
-    skip_patterns = [
-        r"^🎨", r"^📝", r"^\*\*Prompt", r"^\*\*Caption",
-        r"^Prompt\s*[\[\(]", r"^Caption\s*[\[\(]",
-        r"^─+$", r"^━+$", r"^\-+$", r"^_{3,}$",
-        r"^\s*$",  # empty lines at start only
+    # Only strip if the ENTIRE first line matches these exact bot-label patterns
+    strict_patterns = [
+        r"^🎨\s*Prompt\s*\[(?:EN|ID)\]\s*$",
+        r"^📝\s*Caption\s*\[(?:EN|ID)\]\s*$",
+        r"^─+$",
+        r"^━+$",
     ]
-    started = False
-    for line in lines:
-        if not started:
-            is_skip = any(re.match(p, line.strip(), re.IGNORECASE) for p in skip_patterns)
-            if is_skip:
-                continue
-            started = True
-        clean_lines.append(line)
-    return "\n".join(clean_lines).strip()
+    lines = text.split("\n")
+    while lines:
+        first = lines[0].strip()
+        if any(re.match(p, first, re.IGNORECASE) for p in strict_patterns) or first == "":
+            lines.pop(0)
+        else:
+            break
+    return "\n".join(lines).strip()
 
 def format_caption_output(raw_text):
     parts = [p.strip() for p in raw_text.split("---CAPTION_BREAK---") if p.strip()]
