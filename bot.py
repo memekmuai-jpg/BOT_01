@@ -179,14 +179,10 @@ async def process_single_image(task, context):
 
         if mode == "caption":
             output = format_caption_output(result)
-            mode_label = "📝 Caption"
         else:
             output = result
-            mode_label = "🎨 Prompt"
 
-        lang_label = f"[{language}]"
-        header = f"{mode_label} {lang_label}\n{'─'*30}\n"
-        final_text = header + output
+        final_text = output
 
         if len(final_text) > 4096:
             for i in range(0, len(final_text), 4096):
