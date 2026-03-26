@@ -64,10 +64,17 @@ def build_core_system(mode, language, custom_instruction):
             f"Do NOT merge captions together. Always place the delimiter between each variation."
         )
 
+    no_header = (
+        "\n\nCRITICAL: Do NOT include any headers, labels, titles, prefixes, "
+        "or meta-text like 'Prompt:', 'Caption:', 'Here is...', 'Output:', "
+        "emoji labels, or any introductory sentences. "
+        "Start your response DIRECTLY with the content itself. Nothing else before it."
+    )
+
     if custom_instruction and custom_instruction.strip():
-        full_system = core + "\n\n[Additional Instructions]:\n" + custom_instruction.strip()
+        full_system = core + no_header + "\n\n[Additional Instructions]:\n" + custom_instruction.strip()
     else:
-        full_system = core
+        full_system = core + no_header
 
     return full_system
 
@@ -103,6 +110,27 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
+
+def clean_output(text):
+    """Remove any header/label lines that AI might generate at the start."""
+    import re
+    lines = text.split("\n")
+    clean_lines = []
+    skip_patterns = [
+        r"^🎨", r"^📝", r"^\*\*Prompt", r"^\*\*Caption",
+        r"^Prompt\s*[\[\(]", r"^Caption\s*[\[\(]",
+        r"^─+$", r"^━+$", r"^\-+$", r"^_{3,}$",
+        r"^\s*$",  # empty lines at start only
+    ]
+    started = False
+    for line in lines:
+        if not started:
+            is_skip = any(re.match(p, line.strip(), re.IGNORECASE) for p in skip_patterns)
+            if is_skip:
+                continue
+            started = True
+        clean_lines.append(line)
+    return "\n".join(clean_lines).strip()
 
 def format_caption_output(raw_text):
     parts = [p.strip() for p in raw_text.split("---CAPTION_BREAK---") if p.strip()]
@@ -176,6 +204,8 @@ async def process_single_image(task, context):
 
         if thinking_msg:
             await context.bot.delete_message(chat_id=chat_id, message_id=thinking_msg.message_id)
+
+        result = clean_output(result)
 
         if mode == "caption":
             output = format_caption_output(result)
