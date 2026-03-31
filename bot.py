@@ -43,42 +43,33 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def build_core_system(mode, language, custom_instruction):
-    # Aturan bahasa ditaruh terpisah untuk dipaksa di akhir prompt
-    lang_rule = (
-        "YOUR ENTIRE RESPONSE MUST BE IN ENGLISH. Do not use any other language."
-        if language == "EN" else
-        "YOUR ENTIRE RESPONSE MUST BE IN BAHASA INDONESIA. Jangan gunakan bahasa lain."
-    )
+    # Logika dikembalikan ke format lama: Core + Bahasa + System Instruction
+    lang_note = "RESPOND STRICTLY IN ENGLISH. Do not use any other language." if language == "EN" else "JAWAB STRICTLY DALAM BAHASA INDONESIA. Jangan gunakan bahasa lain."
 
     if mode == "prompt":
         core = (
-            "You are an expert AI image analyst specializing in generating detailed image prompts.\n"
-            "Analyze the given image and generate a highly detailed, descriptive prompt."
+            f"You are an expert AI image analyst specializing in generating detailed image prompts. "
+            f"{lang_note}\n"
+            f"Analyze the given image and generate a highly detailed, descriptive prompt."
         )
     else:
         core = (
-            "You are a professional social media copywriter.\n"
-            "Analyze the given image and generate engaging captions.\n"
-            "IMPORTANT: If generating multiple variations, separate them EXACTLY with this delimiter on its own line: ---CAPTION_BREAK---"
+            f"You are a professional social media copywriter. "
+            f"{lang_note}\n"
+            f"IMPORTANT: If you generate multiple caption variations, separate them EXACTLY with this delimiter on its own line: ---CAPTION_BREAK---"
         )
 
-    # Larangan basa-basi
+    # Core larangan basa-basi (tanpa fungsi pembersih yang merusak output)
     no_header = (
-        "OUTPUT ONLY THE FINAL RESULT. "
-        "DO NOT include any conversational text, pleasantries, headers, or introductions (like 'Here is...', 'Prompt:')."
+        "\n\nCRITICAL RULE: OUTPUT ONLY THE FINAL RESULT. "
+        "DO NOT include any conversational text, pleasantries, headers, titles, or introductions."
     )
 
-    custom_text = custom_instruction.strip() if custom_instruction else "None"
-
-    # STRUKTUR BARU: Aturan wajib (bahasa & format) ditaruh PALING BAWAH agar AI tidak bisa mengabaikannya
-    full_system = (
-        f"{core}\n\n"
-        f"=== CUSTOM USER INSTRUCTIONS ===\n"
-        f"{custom_text}\n\n"
-        f"=== STRICT SYSTEM RULES (MUST FOLLOW) ===\n"
-        f"1. {lang_rule}\n"
-        f"2. {no_header}"
-    )
+    # Menggabungkan Core dengan Instruksi Custom yang sudah disimpan di database
+    if custom_instruction and custom_instruction.strip():
+        full_system = core + no_header + "\n\n[System Instructions]:\n" + custom_instruction.strip()
+    else:
+        full_system = core + no_header
 
     return full_system
 
@@ -103,7 +94,7 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
                     },
                     {
                         "type": "text",
-                        "text": "Analyze this image based on the system rules."
+                        "text": "Analyze this image."
                     }
                 ]
             }
@@ -491,11 +482,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await context.bot.get_file(doc.file_id)
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(file.file_path)
-                text = resp.text.strip()
+                text = resp.text.strip() # <--- INI PROSES BACA ISI FILE .TXT
 
             s = get_settings()
             name = context.user_data.get("si_temp_name", "Instruction")
 
+            # INI PROSES PENULISAN ULANG KE DATABASE (data.json)
             if awaiting.startswith("si_add_content_"):
                 mode_key = awaiting.replace("si_add_content_", "")
                 instructions = s.get(f"{mode_key}_instructions", [])
@@ -592,4 +584,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
