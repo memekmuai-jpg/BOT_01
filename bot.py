@@ -43,14 +43,14 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def build_core_system(mode, language, custom_instruction):
-    # Logika dikembalikan ke format lama: Core + Bahasa + System Instruction
-    lang_note = "RESPOND STRICTLY IN ENGLISH. Do not use any other language." if language == "EN" else "JAWAB STRICTLY DALAM BAHASA INDONESIA. Jangan gunakan bahasa lain."
+    # Penegasan bahasa ditaruh di core
+    lang_note = "RESPOND STRICTLY IN ENGLISH. DO NOT USE ANY OTHER LANGUAGE." if language == "EN" else "JAWAB STRICTLY DALAM BAHASA INDONESIA. JANGAN GUNAKAN BAHASA LAIN."
 
     if mode == "prompt":
         core = (
-            f"You are an expert AI image analyst specializing in generating detailed image prompts. "
+            f"You are an expert AI image analyst specializing in generating highly detailed image prompts. "
             f"{lang_note}\n"
-            f"Analyze the given image and generate a highly detailed, descriptive prompt."
+            f"Analyze the given image accurately."
         )
     else:
         core = (
@@ -59,15 +59,21 @@ def build_core_system(mode, language, custom_instruction):
             f"IMPORTANT: If you generate multiple caption variations, separate them EXACTLY with this delimiter on its own line: ---CAPTION_BREAK---"
         )
 
-    # Core larangan basa-basi (tanpa fungsi pembersih yang merusak output)
+    # Larangan basa-basi
     no_header = (
         "\n\nCRITICAL RULE: OUTPUT ONLY THE FINAL RESULT. "
         "DO NOT include any conversational text, pleasantries, headers, titles, or introductions."
     )
 
-    # Menggabungkan Core dengan Instruksi Custom yang sudah disimpan di database
+    # Menggabungkan dengan format "PAGAR" agar AI Llama tidak melewatkannya
     if custom_instruction and custom_instruction.strip():
-        full_system = core + no_header + "\n\n[System Instructions]:\n" + custom_instruction.strip()
+        full_system = (
+            f"{core}{no_header}\n\n"
+            f"=== START OF CUSTOM SYSTEM INSTRUCTIONS ===\n"
+            f"{custom_instruction.strip()}\n"
+            f"=== END OF CUSTOM SYSTEM INSTRUCTIONS ===\n\n"
+            f"WARNING: You are required to read the custom instructions above completely before answering."
+        )
     else:
         full_system = core + no_header
 
@@ -78,6 +84,14 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
+    
+    # Ini kuncinya: Meneriaki AI di User Prompt agar melihat ke atas
+    user_nagging_text = (
+        "Analyze this image. CRITICAL REMINDER: Before generating your response, "
+        "you MUST recall and strictly apply ALL rules, step-by-step formats, and constraints "
+        "provided in the [CUSTOM SYSTEM INSTRUCTIONS] block above. Do not skip anything."
+    )
+
     payload = {
         "model": GROQ_VISION_MODEL,
         "max_tokens": 2000,
@@ -87,14 +101,14 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
                 "role": "user",
                 "content": [
                     {
+                        "type": "text",
+                        "text": user_nagging_text
+                    },
+                    {
                         "type": "image_url",
                         "image_url": {
                             "url": f"data:{mime_type};base64,{image_data_b64}"
                         }
-                    },
-                    {
-                        "type": "text",
-                        "text": "Analyze this image."
                     }
                 ]
             }
@@ -482,12 +496,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await context.bot.get_file(doc.file_id)
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(file.file_path)
-                text = resp.text.strip() # <--- INI PROSES BACA ISI FILE .TXT
+                text = resp.text.strip()
 
             s = get_settings()
             name = context.user_data.get("si_temp_name", "Instruction")
 
-            # INI PROSES PENULISAN ULANG KE DATABASE (data.json)
             if awaiting.startswith("si_add_content_"):
                 mode_key = awaiting.replace("si_add_content_", "")
                 instructions = s.get(f"{mode_key}_instructions", [])
