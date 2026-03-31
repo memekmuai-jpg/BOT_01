@@ -43,12 +43,13 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def build_core_system(mode, language, custom_instruction):
-    lang_note = "Respond in English." if language == "EN" else "Jawab dalam Bahasa Indonesia."
+    # Penegasan bahasa yang sangat ketat
+    lang_note = "RESPOND STRICTLY IN ENGLISH." if language == "EN" else "JAWAB STRICTLY DALAM BAHASA INDONESIA."
 
     if mode == "prompt":
         core = (
             f"You are an expert AI image analyst specializing in generating detailed image prompts. "
-            f"{lang_note} "
+            f"{lang_note}\n"
             f"Analyze the given image and generate a highly detailed, descriptive prompt "
             f"that can be used to recreate this image with an AI image generator. "
             f"Focus on: subject, style, lighting, colors, composition, mood, camera angle, "
@@ -57,22 +58,22 @@ def build_core_system(mode, language, custom_instruction):
     else:
         core = (
             f"You are a professional social media copywriter. "
-            f"{lang_note} "
+            f"{lang_note}\n"
             f"Analyze the given image and generate engaging captions for social media. "
-            f"IMPORTANT: Each caption variation MUST be separated by exactly this delimiter on its own line: "
+            f"IMPORTANT: If you generate multiple caption variations, each variation MUST be separated by exactly this delimiter on its own line: "
             f"---CAPTION_BREAK--- "
-            f"Do NOT merge captions together. Always place the delimiter between each variation."
         )
 
+    # Instruksi absolut untuk tidak memberikan basa-basi (sesuai permintaan Anda)
     no_header = (
-        "\n\nCRITICAL: Do NOT include any headers, labels, titles, prefixes, "
-        "or meta-text like 'Prompt:', 'Caption:', 'Here is...', 'Output:', "
-        "emoji labels, or any introductory sentences. "
-        "Start your response DIRECTLY with the content itself. Nothing else before it."
+        "\n\nCRITICAL RULE: OUTPUT ONLY THE FINAL RESULT. "
+        "DO NOT include any conversational text, pleasantries, headers, titles, or introductions "
+        "(e.g., 'Here is the result', 'Tentu, ini hasilnya:', 'Output:', 'Prompt:'). "
+        "Just output the raw prompt or captions directly."
     )
 
     if custom_instruction and custom_instruction.strip():
-        full_system = core + no_header + "\n\n[Additional Instructions]:\n" + custom_instruction.strip()
+        full_system = core + no_header + "\n\n[Additional System Instructions]:\n" + custom_instruction.strip()
     else:
         full_system = core + no_header
 
@@ -111,31 +112,10 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
-def clean_output(text):
-    """Remove only exact bot-generated header patterns from the very first line."""
-    import re
-    # Only strip if the ENTIRE first line matches these exact bot-label patterns
-    strict_patterns = [
-        r"^🎨\s*Prompt\s*\[(?:EN|ID)\]\s*$",
-        r"^📝\s*Caption\s*\[(?:EN|ID)\]\s*$",
-        r"^─+$",
-        r"^━+$",
-    ]
-    lines = text.split("\n")
-    while lines:
-        first = lines[0].strip()
-        if any(re.match(p, first, re.IGNORECASE) for p in strict_patterns) or first == "":
-            lines.pop(0)
-        else:
-            break
-    return "\n".join(lines).strip()
-
 def format_caption_output(raw_text):
     parts = [p.strip() for p in raw_text.split("---CAPTION_BREAK---") if p.strip()]
     if len(parts) <= 1:
-        parts = [p.strip() for p in raw_text.split("\n\n") if p.strip()]
-    if len(parts) <= 1:
-        return raw_text
+        return raw_text.strip()
     result = ""
     for i, part in enumerate(parts, 1):
         result += f"━━━ Variasi {i} ━━━\n{part}\n\n"
@@ -203,14 +183,11 @@ async def process_single_image(task, context):
         if thinking_msg:
             await context.bot.delete_message(chat_id=chat_id, message_id=thinking_msg.message_id)
 
-        result = clean_output(result)
-
+        # Hasilkan format final tanpa clean_output
         if mode == "caption":
-            output = format_caption_output(result)
+            final_text = format_caption_output(result)
         else:
-            output = result
-
-        final_text = output
+            final_text = result.strip()
 
         if len(final_text) > 4096:
             for i in range(0, len(final_text), 4096):
@@ -251,7 +228,7 @@ async def process_single_image(task, context):
         )
 
 # ─────────────────────────────────────────────
-# USER HANDLERS
+# USER & ADMIN HANDLERS
 # ─────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -298,10 +275,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in queue_locks:
         queue_locks[chat_id] = True
         asyncio.create_task(process_queue(chat_id, context))
-
-# ─────────────────────────────────────────────
-# ADMIN MENU
-# ─────────────────────────────────────────────
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -371,10 +344,7 @@ async def show_si_menu(query, mode_key):
     keyboard = []
     for i, instr in enumerate(instructions):
         keyboard.append([
-            InlineKeyboardButton(
-                f"{'✅' if i == active_idx else '○'} {instr['name']}",
-                callback_data=f"si_select_{mode_key}_{i}"
-            ),
+            InlineKeyboardButton(f"{'✅' if i == active_idx else '○'} {instr['name']}", callback_data=f"si_select_{mode_key}_{i}"),
             InlineKeyboardButton("✏️", callback_data=f"si_edit_{mode_key}_{i}"),
             InlineKeyboardButton("🗑️", callback_data=f"si_delete_{mode_key}_{i}"),
         ])
@@ -404,10 +374,7 @@ async def send_si_menu(message, mode_key):
     keyboard = []
     for i, instr in enumerate(instructions):
         keyboard.append([
-            InlineKeyboardButton(
-                f"{'✅' if i == active_idx else '○'} {instr['name']}",
-                callback_data=f"si_select_{mode_key}_{i}"
-            ),
+            InlineKeyboardButton(f"{'✅' if i == active_idx else '○'} {instr['name']}", callback_data=f"si_select_{mode_key}_{i}"),
             InlineKeyboardButton("✏️", callback_data=f"si_edit_{mode_key}_{i}"),
             InlineKeyboardButton("🗑️", callback_data=f"si_delete_{mode_key}_{i}"),
         ])
@@ -520,8 +487,78 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_si_menu(query, mode_key)
 
 # ─────────────────────────────────────────────
-# TEXT HANDLER
+# INPUT HANDLERS (TEXT & DOCUMENT)
 # ─────────────────────────────────────────────
+
+async def cmd_simpan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    awaiting = context.user_data.get("awaiting")
+    if not awaiting or not ("_content_" in awaiting):
+        await update.message.reply_text("❌ Tidak ada draft instruction yang sedang dibuat.")
+        return
+
+    s = get_settings()
+    content = context.user_data.get("si_temp_content", "").strip()
+
+    if not content:
+        await update.message.reply_text("⚠️ Draft masih kosong! Kirim teks atau file .txt terlebih dahulu.")
+        return
+
+    if awaiting.startswith("si_add_content_"):
+        mode_key = awaiting.replace("si_add_content_", "")
+        name = context.user_data.get("si_temp_name", "Instruction")
+
+        instructions = s.get(f"{mode_key}_instructions", [])
+        instructions.append({"name": name, "content": content})
+        s[f"{mode_key}_instructions"] = instructions
+        save_settings(s)
+
+        preview = content[:100] + "..." if len(content) > 100 else content
+        await update.message.reply_text(
+            f"✅ *'{name}'* berhasil ditambahkan!\n\nIsi: _{preview}_",
+            parse_mode="Markdown"
+        )
+        await send_si_menu(update.message, mode_key)
+
+    elif awaiting.startswith("si_edit_content_"):
+        parts = awaiting.split("_")
+        mode_key = parts[3]
+        idx = int(parts[4])
+        name = context.user_data.get("si_temp_name", "")
+
+        if content == "-":
+            content = context.user_data.get("edit_old_content", "")
+
+        instructions = s.get(f"{mode_key}_instructions", [])
+        instructions[idx] = {"name": name, "content": content}
+        s[f"{mode_key}_instructions"] = instructions
+        save_settings(s)
+
+        await update.message.reply_text(
+            f"✅ *'{name}'* berhasil diperbarui!",
+            parse_mode="Markdown"
+        )
+        await send_si_menu(update.message, mode_key)
+
+    context.user_data.clear()
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    awaiting = context.user_data.get("awaiting")
+    if awaiting and ("_content_" in awaiting):
+        doc = update.message.document
+        if doc.mime_type == "text/plain" or doc.file_name.endswith(".txt"):
+            file = await context.bot.get_file(doc.file_id)
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(file.file_path)
+                text = resp.text
+
+            current = context.user_data.get("si_temp_content", "")
+            context.user_data["si_temp_content"] = current + "\n" + text if current else text
+            await update.message.reply_text(
+                f"📄 Teks dari file '{doc.file_name}' ditambahkan ke draft!\n"
+                f"Ketik /simpan jika sudah selesai."
+            )
+        else:
+            await update.message.reply_text("❌ Harap kirim file teks berekstensi .txt")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "/cancel":
@@ -551,32 +588,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mode_key = awaiting.replace("si_add_name_", "")
         context.user_data["si_temp_name"] = text
         context.user_data["awaiting"] = f"si_add_content_{mode_key}"
+        context.user_data["si_temp_content"] = ""
         await update.message.reply_text(
             f"➕ *Tambah System Instruction*\n\n"
-            f"*Langkah 2/2* — Ketik *isi* instruction untuk *'{text}'*:\n\n"
-            f"Contoh:\n`Buat 3 variasi caption dengan gaya yang berbeda-beda`\n\n"
+            f"*Langkah 2/2* — Kirim *isi* instruction untuk *'{text}'*.\n\n"
+            f"💡 *TIPS TEKS PANJANG:*\n"
+            f"Kirim teksnya sepotong-sepotong di chat ini, ATAU upload file *.txt* berisi instruksinya.\n\n"
+            f"👉 Jika semuanya sudah dimasukkan, ketik /simpan\n"
             f"_(Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
 
-    # ── Add Step 2: Konten ──
-    elif awaiting.startswith("si_add_content_"):
-        mode_key = awaiting.replace("si_add_content_", "")
-        name = context.user_data.pop("si_temp_name", "Instruction")
-        context.user_data.pop("awaiting")
+    # ── Add/Edit Step 2: Kumpulkan Konten ──
+    elif awaiting.startswith("si_add_content_") or awaiting.startswith("si_edit_content_"):
+        if text == "-" and awaiting.startswith("si_edit_content_"):
+            context.user_data["si_temp_content"] = "-"
+            await cmd_simpan(update, context)
+            return
 
-        instructions = s.get(f"{mode_key}_instructions", [])
-        instructions.append({"name": name, "content": text})
-        s[f"{mode_key}_instructions"] = instructions
-        save_settings(s)
-
-        preview = text[:100] + "..." if len(text) > 100 else text
+        current = context.user_data.get("si_temp_content", "")
+        context.user_data["si_temp_content"] = current + "\n" + text if current else text
         await update.message.reply_text(
-            f"✅ *'{name}'* berhasil ditambahkan!\n\n"
-            f"Isi: _{preview}_",
-            parse_mode="Markdown"
+            "📥 Teks ditambahkan ke draft.\nKirim teks lanjutan, upload .txt, atau ketik /simpan jika selesai."
         )
-        await send_si_menu(update.message, mode_key)
 
     # ── Edit Step 1: Nama Baru ──
     elif awaiting.startswith("si_edit_name_"):
@@ -585,41 +619,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         idx = int(parts[4])
         old_name = context.user_data.get("edit_old_name", "")
         new_name = old_name if text == "-" or not text else text
+        
         context.user_data["si_temp_name"] = new_name
         context.user_data["awaiting"] = f"si_edit_content_{mode_key}_{idx}"
+        context.user_data["si_temp_content"] = ""
         old_content = context.user_data.get("edit_old_content", "")
         preview_old = old_content[:150] + "..." if len(old_content) > 150 else old_content
 
         await update.message.reply_text(
             f"✏️ *Edit: {new_name}*\n\n"
-            f"*Langkah 2/2* — Ketik isi baru:\n\n"
+            f"*Langkah 2/2* — Kirim isi baru:\n\n"
             f"Isi saat ini:\n`{preview_old}`\n\n"
+            f"💡 Kirim teks sepotong-sepotong ATAU upload file *.txt*.\n"
+            f"👉 Jika sudah selesai, ketik /simpan\n"
             f"_(Kirim `-` untuk tetap pakai isi lama)_\n"
             f"_(Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
-
-    # ── Edit Step 2: Konten Baru ──
-    elif awaiting.startswith("si_edit_content_"):
-        parts = awaiting.split("_")
-        mode_key = parts[3]
-        idx = int(parts[4])
-        new_name = context.user_data.pop("si_temp_name", "")
-        old_content = context.user_data.pop("edit_old_content", "")
-        context.user_data.pop("edit_old_name", None)
-        context.user_data.pop("awaiting")
-
-        new_content = old_content if text == "-" or not text else text
-        instructions = s.get(f"{mode_key}_instructions", [])
-        instructions[idx] = {"name": new_name, "content": new_content}
-        s[f"{mode_key}_instructions"] = instructions
-        save_settings(s)
-
-        await update.message.reply_text(
-            f"✅ *'{new_name}'* berhasil diperbarui!",
-            parse_mode="Markdown"
-        )
-        await send_si_menu(update.message, mode_key)
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -629,11 +645,14 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("simpan", cmd_simpan))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     logger.info("Bot started!")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
