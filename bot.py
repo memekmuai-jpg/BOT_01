@@ -43,39 +43,42 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def build_core_system(mode, language, custom_instruction):
-    # Penegasan bahasa yang sangat ketat
-    lang_note = "RESPOND STRICTLY IN ENGLISH." if language == "EN" else "JAWAB STRICTLY DALAM BAHASA INDONESIA."
+    # Aturan bahasa ditaruh terpisah untuk dipaksa di akhir prompt
+    lang_rule = (
+        "YOUR ENTIRE RESPONSE MUST BE IN ENGLISH. Do not use any other language."
+        if language == "EN" else
+        "YOUR ENTIRE RESPONSE MUST BE IN BAHASA INDONESIA. Jangan gunakan bahasa lain."
+    )
 
     if mode == "prompt":
         core = (
-            f"You are an expert AI image analyst specializing in generating detailed image prompts. "
-            f"{lang_note}\n"
-            f"Analyze the given image and generate a highly detailed, descriptive prompt "
-            f"that can be used to recreate this image with an AI image generator. "
-            f"Focus on: subject, style, lighting, colors, composition, mood, camera angle, "
-            f"background, and any relevant technical details. Be specific and descriptive."
+            "You are an expert AI image analyst specializing in generating detailed image prompts.\n"
+            "Analyze the given image and generate a highly detailed, descriptive prompt."
         )
     else:
         core = (
-            f"You are a professional social media copywriter. "
-            f"{lang_note}\n"
-            f"Analyze the given image and generate engaging captions for social media. "
-            f"IMPORTANT: If you generate multiple caption variations, each variation MUST be separated by exactly this delimiter on its own line: "
-            f"---CAPTION_BREAK--- "
+            "You are a professional social media copywriter.\n"
+            "Analyze the given image and generate engaging captions.\n"
+            "IMPORTANT: If generating multiple variations, separate them EXACTLY with this delimiter on its own line: ---CAPTION_BREAK---"
         )
 
-    # Instruksi absolut untuk tidak memberikan basa-basi (sesuai permintaan Anda)
+    # Larangan basa-basi
     no_header = (
-        "\n\nCRITICAL RULE: OUTPUT ONLY THE FINAL RESULT. "
-        "DO NOT include any conversational text, pleasantries, headers, titles, or introductions "
-        "(e.g., 'Here is the result', 'Tentu, ini hasilnya:', 'Output:', 'Prompt:'). "
-        "Just output the raw prompt or captions directly."
+        "OUTPUT ONLY THE FINAL RESULT. "
+        "DO NOT include any conversational text, pleasantries, headers, or introductions (like 'Here is...', 'Prompt:')."
     )
 
-    if custom_instruction and custom_instruction.strip():
-        full_system = core + no_header + "\n\n[Additional System Instructions]:\n" + custom_instruction.strip()
-    else:
-        full_system = core + no_header
+    custom_text = custom_instruction.strip() if custom_instruction else "None"
+
+    # STRUKTUR BARU: Aturan wajib (bahasa & format) ditaruh PALING BAWAH agar AI tidak bisa mengabaikannya
+    full_system = (
+        f"{core}\n\n"
+        f"=== CUSTOM USER INSTRUCTIONS ===\n"
+        f"{custom_text}\n\n"
+        f"=== STRICT SYSTEM RULES (MUST FOLLOW) ===\n"
+        f"1. {lang_rule}\n"
+        f"2. {no_header}"
+    )
 
     return full_system
 
@@ -100,7 +103,7 @@ async def call_groq_vision(api_key, system_prompt, image_data_b64, mime_type="im
                     },
                     {
                         "type": "text",
-                        "text": "Analyze this image based on your instructions."
+                        "text": "Analyze this image based on the system rules."
                     }
                 ]
             }
@@ -183,7 +186,6 @@ async def process_single_image(task, context):
         if thinking_msg:
             await context.bot.delete_message(chat_id=chat_id, message_id=thinking_msg.message_id)
 
-        # Hasilkan format final tanpa clean_output
         if mode == "caption":
             final_text = format_caption_output(result)
         else:
@@ -407,9 +409,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_apikey":
         context.user_data["awaiting"] = "api_key"
         await query.edit_message_text(
-            "🔑 *Set API Key Groq*\n\n"
-            "Kirim API Key kamu dari https://console.groq.com\n\n"
-            "_(Ketik /cancel untuk batal)_",
+            "🔑 *Set API Key Groq*\n\nKirim API Key kamu dari https://console.groq.com\n\n_(Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
 
@@ -448,10 +448,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mode_key = data.replace("si_add_", "")
         context.user_data["awaiting"] = f"si_add_name_{mode_key}"
         await query.edit_message_text(
-            f"➕ *Tambah System Instruction*\n\n"
-            f"*Langkah 1/2* — Ketik *nama* instruction:\n\n"
-            f"Contoh: `Formal`, `Casual`, `3 Variasi`, `Promosi`\n\n"
-            f"_(Ketik /cancel untuk batal)_",
+            f"➕ *Tambah System Instruction*\n\n*Langkah 1/2* — Ketik *nama* instruction:\n\n_(Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
 
@@ -461,12 +458,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         instr = s.get(f"{mode_key}_instructions", [])[idx]
         context.user_data["awaiting"] = f"si_edit_name_{mode_key}_{idx}"
         context.user_data["edit_old_name"] = instr["name"]
-        context.user_data["edit_old_content"] = instr["content"]
         await query.edit_message_text(
-            f"✏️ *Edit: {instr['name']}*\n\n"
-            f"*Langkah 1/2* — Ketik nama baru:\n"
-            f"_(Kirim `-` untuk tetap pakai nama lama)_\n\n"
-            f"_(Ketik /cancel untuk batal)_",
+            f"✏️ *Edit: {instr['name']}*\n\n*Langkah 1/2* — Ketik nama baru:\n_(Kirim `-` untuk tetap pakai nama lama)_\n\n_(Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
 
@@ -487,59 +480,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_si_menu(query, mode_key)
 
 # ─────────────────────────────────────────────
-# INPUT HANDLERS (TEXT & DOCUMENT)
+# INPUT HANDLERS (FILE & TEXT)
 # ─────────────────────────────────────────────
-
-async def cmd_simpan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    awaiting = context.user_data.get("awaiting")
-    if not awaiting or not ("_content_" in awaiting):
-        await update.message.reply_text("❌ Tidak ada draft instruction yang sedang dibuat.")
-        return
-
-    s = get_settings()
-    content = context.user_data.get("si_temp_content", "").strip()
-
-    if not content:
-        await update.message.reply_text("⚠️ Draft masih kosong! Kirim teks atau file .txt terlebih dahulu.")
-        return
-
-    if awaiting.startswith("si_add_content_"):
-        mode_key = awaiting.replace("si_add_content_", "")
-        name = context.user_data.get("si_temp_name", "Instruction")
-
-        instructions = s.get(f"{mode_key}_instructions", [])
-        instructions.append({"name": name, "content": content})
-        s[f"{mode_key}_instructions"] = instructions
-        save_settings(s)
-
-        preview = content[:100] + "..." if len(content) > 100 else content
-        await update.message.reply_text(
-            f"✅ *'{name}'* berhasil ditambahkan!\n\nIsi: _{preview}_",
-            parse_mode="Markdown"
-        )
-        await send_si_menu(update.message, mode_key)
-
-    elif awaiting.startswith("si_edit_content_"):
-        parts = awaiting.split("_")
-        mode_key = parts[3]
-        idx = int(parts[4])
-        name = context.user_data.get("si_temp_name", "")
-
-        if content == "-":
-            content = context.user_data.get("edit_old_content", "")
-
-        instructions = s.get(f"{mode_key}_instructions", [])
-        instructions[idx] = {"name": name, "content": content}
-        s[f"{mode_key}_instructions"] = instructions
-        save_settings(s)
-
-        await update.message.reply_text(
-            f"✅ *'{name}'* berhasil diperbarui!",
-            parse_mode="Markdown"
-        )
-        await send_si_menu(update.message, mode_key)
-
-    context.user_data.clear()
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     awaiting = context.user_data.get("awaiting")
@@ -549,16 +491,36 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await context.bot.get_file(doc.file_id)
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(file.file_path)
-                text = resp.text
+                text = resp.text.strip()
 
-            current = context.user_data.get("si_temp_content", "")
-            context.user_data["si_temp_content"] = current + "\n" + text if current else text
-            await update.message.reply_text(
-                f"📄 Teks dari file '{doc.file_name}' ditambahkan ke draft!\n"
-                f"Ketik /simpan jika sudah selesai."
-            )
+            s = get_settings()
+            name = context.user_data.get("si_temp_name", "Instruction")
+
+            if awaiting.startswith("si_add_content_"):
+                mode_key = awaiting.replace("si_add_content_", "")
+                instructions = s.get(f"{mode_key}_instructions", [])
+                instructions.append({"name": name, "content": text})
+                s[f"{mode_key}_instructions"] = instructions
+                save_settings(s)
+                
+                await update.message.reply_text(f"✅ System Instruction *'{name}'* berhasil disimpan dari file!", parse_mode="Markdown")
+                await send_si_menu(update.message, mode_key)
+
+            elif awaiting.startswith("si_edit_content_"):
+                parts = awaiting.split("_")
+                mode_key = parts[3]
+                idx = int(parts[4])
+                instructions = s.get(f"{mode_key}_instructions", [])
+                instructions[idx] = {"name": name, "content": text}
+                s[f"{mode_key}_instructions"] = instructions
+                save_settings(s)
+
+                await update.message.reply_text(f"✅ System Instruction *'{name}'* berhasil diperbarui dari file!", parse_mode="Markdown")
+                await send_si_menu(update.message, mode_key)
+
+            context.user_data.clear()
         else:
-            await update.message.reply_text("❌ Harap kirim file teks berekstensi .txt")
+            await update.message.reply_text("❌ Harus format .txt ya. Silakan kirim ulang.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "/cancel":
@@ -575,7 +537,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     s = get_settings()
 
-    # ── Set API Key ──
     if awaiting == "api_key":
         s["api_key"] = text
         save_settings(s)
@@ -583,59 +544,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ API Key berhasil disimpan!")
         await show_admin_menu(update.message, context, edit=False)
 
-    # ── Add Step 1: Nama ──
     elif awaiting.startswith("si_add_name_"):
         mode_key = awaiting.replace("si_add_name_", "")
         context.user_data["si_temp_name"] = text
         context.user_data["awaiting"] = f"si_add_content_{mode_key}"
-        context.user_data["si_temp_content"] = ""
         await update.message.reply_text(
-            f"➕ *Tambah System Instruction*\n\n"
-            f"*Langkah 2/2* — Kirim *isi* instruction untuk *'{text}'*.\n\n"
-            f"💡 *TIPS TEKS PANJANG:*\n"
-            f"Kirim teksnya sepotong-sepotong di chat ini, ATAU upload file *.txt* berisi instruksinya.\n\n"
-            f"👉 Jika semuanya sudah dimasukkan, ketik /simpan\n"
-            f"_(Ketik /cancel untuk batal)_",
+            f"📄 *Nama disimpan: {text}*\n\n"
+            f"*Langkah 2/2* — SEKARANG UPLOAD FILE `.txt` YANG BERISI INSTRUKSI ANDA.\n\n"
+            f"_(Bot akan langsung membaca isinya dan menyimpannya. Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
 
-    # ── Add/Edit Step 2: Kumpulkan Konten ──
-    elif awaiting.startswith("si_add_content_") or awaiting.startswith("si_edit_content_"):
-        if text == "-" and awaiting.startswith("si_edit_content_"):
-            context.user_data["si_temp_content"] = "-"
-            await cmd_simpan(update, context)
-            return
-
-        current = context.user_data.get("si_temp_content", "")
-        context.user_data["si_temp_content"] = current + "\n" + text if current else text
-        await update.message.reply_text(
-            "📥 Teks ditambahkan ke draft.\nKirim teks lanjutan, upload .txt, atau ketik /simpan jika selesai."
-        )
-
-    # ── Edit Step 1: Nama Baru ──
     elif awaiting.startswith("si_edit_name_"):
         parts = awaiting.split("_")
         mode_key = parts[3]
         idx = int(parts[4])
         old_name = context.user_data.get("edit_old_name", "")
-        new_name = old_name if text == "-" or not text else text
+        new_name = old_name if text == "-" else text
         
         context.user_data["si_temp_name"] = new_name
         context.user_data["awaiting"] = f"si_edit_content_{mode_key}_{idx}"
-        context.user_data["si_temp_content"] = ""
-        old_content = context.user_data.get("edit_old_content", "")
-        preview_old = old_content[:150] + "..." if len(old_content) > 150 else old_content
 
         await update.message.reply_text(
-            f"✏️ *Edit: {new_name}*\n\n"
-            f"*Langkah 2/2* — Kirim isi baru:\n\n"
-            f"Isi saat ini:\n`{preview_old}`\n\n"
-            f"💡 Kirim teks sepotong-sepotong ATAU upload file *.txt*.\n"
-            f"👉 Jika sudah selesai, ketik /simpan\n"
-            f"_(Kirim `-` untuk tetap pakai isi lama)_\n"
-            f"_(Ketik /cancel untuk batal)_",
+            f"📄 *Nama diset: {new_name}*\n\n"
+            f"*Langkah 2/2* — SEKARANG UPLOAD FILE `.txt` YANG BERISI INSTRUKSI BARU ANDA.\n\n"
+            f"_(Bot akan langsung membaca isinya. Ketik /cancel untuk batal)_",
             parse_mode="Markdown"
         )
+
+    elif awaiting.startswith("si_add_content_") or awaiting.startswith("si_edit_content_"):
+        await update.message.reply_text("❌ JANGAN DIKETIK. Tolong upload file berformat `.txt` yang berisi instruksinya.")
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -645,7 +583,6 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("simpan", cmd_simpan))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
